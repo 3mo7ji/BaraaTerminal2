@@ -1,335 +1,314 @@
 package com.baraa.terminal2
 
-import android.app.*
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.content.res.AssetManager
 import android.net.Uri
+import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
-import android.os.Build
 import android.provider.DocumentsContract
+import android.content.pm.ServiceInfo
+import android.database.Cursor
 import androidx.core.app.NotificationCompat
-import fi.iki.elonen.NanoHTTPD
+import java.io.File
+import java.io.FileOutputStream
+import java.net.HttpURLConnection
+import java.net.URL
 import java.util.ArrayDeque
+import java.util.concurrent.atomic.AtomicBoolean
 
 class HostService : Service() {
-    private var http: NanoHTTPD? = null
-    private var lock: PowerManager.WakeLock? = null
-    private var siteRootId: String? = null
+    private val prefs by lazy { getSharedPreferences("host", Context.MODE_PRIVATE) }
+    private var wakeLock: PowerManager.WakeLock? = null
+    private val preparing = AtomicBoolean(false)
 
-    private val prefs by lazy {
-        getSharedPreferences("host", Context.MODE_PRIVATE)
-    }
+    external fun startNodeWithArguments(arguments: Array<String>): Int
 
     override fun onCreate() {
         super.onCreate()
-        makeChannel()
+        createNotificationChannel()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (intent?.action == STOP) {
-            stopHost()
-            stopForeground(STOP_FOREGROUND_REMOVE)
-            stopSelf()
-            return START_NOT_STICKY
+        when (intent?.action ?: START) {
+            START -> {
+                ensureForeground("تهيئة محرك Node.js")
+                when {
+                    runtimeStarted -> sendControl("start")
+                    runtimeAttempted -> LogStore.append(this, "محرك Node.js سبق تشغيله ثم انتهى؛ لا يمكن إعادة تشغيله داخل العملية نفسها. أوقف التطبيق إجباريًا من إعدادات Android ثم افتحه من جديد.")
+                    else -> startRuntime()
+                }
+            }
+            STOP -> {
+                if (runtimeStarted) sendControl("stop")
+                else LogStore.append(this, "الخادم متوقف بالفعل.")
+            }
         }
-
-        if (intent?.action == START) startHost()
         return START_STICKY
     }
 
-    private fun startHost() {
-        if (http != null) return
+    private fun ensureForeground(message: String) {
+        val notification = makeNotification(message)
+        if (Build.VERSION.SDK_INT >= 29) {
+            startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
+        } else {
+            startForeground(NOTIFICATION_ID, notification)
+        }
+    }
 
-        startForeground(8, makeNotification("جاري البحث عن الموقع"))
+    private fun startRuntime() {
+        if (!preparing.compareAndSet(false, true)) return
+        Thread({
+            try {
+                acquireWakeLock()
+                val treeText = prefs.getString("folder_uri", null)
+                    ?: throw IllegalStateException("اختر مجلد BotDock أولًا.")
+                val tree = Uri.parse(treeText)
+                val project = importBotDock(tree)
+                val nodeProject = File(filesDir, "nodejs-project")
+                copyAssetsIfNeeded(assets, "nodejs-project", nodeProject)
+                val mainJs = File(nodeProject, "main.js")
+                val logFile = File(filesDir, "baraa-host.log")
+                if (!mainJs.exists()) throw IllegalStateException("ملف تشغيل Node.js غير موجود داخل التطبيق.")
 
+                LogStore.append(this, "تم تجهيز ملفات BotDock داخل مساحة التطبيق.")
+                LogStore.append(this, "تشغيل محرك Node.js المدمج (18.20.4)…")
+                prefs.edit().putBoolean("engine_started", true).apply()
+                runtimeAttempted = true
+                runtimeStarted = true
+                Thread({
+                    try {
+                        val code = startNodeWithArguments(arrayOf("node", mainJs.absolutePath, project.absolutePath, logFile.absolutePath))
+                        LogStore.append(this, "انتهى محرك Node.js برمز $code.")
+                    } catch (e: Throwable) {
+                        LogStore.append(this, "تعطل محرك Node.js: ${e.message ?: e.javaClass.simpleName}")
+                    } finally {
+                        runtimeStarted = false
+                        prefs.edit().putBoolean("engine_started", false).apply()
+                        releaseWakeLock()
+                    }
+                }, "Baraa-Node-Runtime").apply { isDaemon = false; start() }
+                val ready = waitForControl(35_000)
+                if (ready) {
+                    LogStore.append(this, "BotDock جاهز على http://127.0.0.1:3000")
+                    updateNotification("محرك Node.js يعمل • لوحة BotDock جاهزة")
+                } else {
+                    LogStore.append(this, "لم يستجب محرك BotDock خلال المهلة. راجع السجل.")
+                    updateNotification("تعذر بدء لوحة BotDock")
+                }
+            } catch (e: Exception) {
+                LogStore.append(this, "فشل التشغيل: ${e.message ?: e.javaClass.simpleName}")
+                releaseWakeLock()
+                updateNotification("تعذر تشغيل BotDock")
+            } finally {
+                preparing.set(false)
+            }
+        }, "Baraa-Host-Setup").start()
+    }
+
+    private fun acquireWakeLock() {
         try {
             val power = getSystemService(POWER_SERVICE) as PowerManager
-            lock = power.newWakeLock(
-                PowerManager.PARTIAL_WAKE_LOCK,
-                "BaraaTerminal2:Host"
-            ).apply {
-                setReferenceCounted(false)
-                acquire()
-            }
-
-            val tree = Uri.parse(prefs.getString("folder_uri", "") ?: "")
-
-            if (tree.toString().isBlank()) {
-                throw Exception("لم يتم اختيار مجلد")
-            }
-
-            // البحث عن index.html داخل المجلدات الفرعية
-            siteRootId = findWebsiteRoot(tree)
-                ?: throw Exception("لم يتم العثور على index.html داخل المجلد المختار")
-
-            log("تم العثور على الموقع بنجاح")
-            log("جذر الموقع: $siteRootId")
-
-            http = object : NanoHTTPD("0.0.0.0", 3000) {
-                override fun serve(session: IHTTPSession): Response {
-                    val requested = session.uri
-                        .trimStart('/')
-                        .ifBlank { "index.html" }
-
-                    if (requested.contains("..")) {
-                        return newFixedLengthResponse(
-                            Response.Status.FORBIDDEN,
-                            MIME_PLAINTEXT,
-                            "Forbidden"
-                        )
-                    }
-
-                    if (requested == "api/health") {
-                        return newFixedLengthResponse(
-                            Response.Status.OK,
-                            "application/json",
-                            """{"ok":true,"app":"BotDock","mode":"android-host"}"""
-                        )
-                    }
-
-                    val rootId = siteRootId
-                        ?: return newFixedLengthResponse(
-                            Response.Status.INTERNAL_ERROR,
-                            MIME_PLAINTEXT,
-                            "Website root not found"
-                        )
-
-                    val fileUri = resolve(tree, rootId, requested)
-                        ?: return newFixedLengthResponse(
-                            Response.Status.NOT_FOUND,
-                            MIME_PLAINTEXT,
-                            "File not found: $requested"
-                        )
-
-                    return try {
-                        val input = contentResolver.openInputStream(fileUri)
-                            ?: return newFixedLengthResponse(
-                                Response.Status.NOT_FOUND,
-                                MIME_PLAINTEXT,
-                                "Cannot open file"
-                            )
-
-                        newChunkedResponse(
-                            Response.Status.OK,
-                            mime(requested),
-                            input
-                        )
-                    } catch (e: Exception) {
-                        newFixedLengthResponse(
-                            Response.Status.INTERNAL_ERROR,
-                            MIME_PLAINTEXT,
-                            e.message ?: "Read error"
-                        )
-                    }
+            if (wakeLock?.isHeld != true) {
+                wakeLock = power.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "BaraaTerminal2:NodeHost").apply {
+                    setReferenceCounted(false)
+                    acquire()
                 }
             }
-
-            http!!.start(NanoHTTPD.SOCKET_READ_TIMEOUT, false)
-            running = true
-
-            log("بدأ الخادم على المنفذ 3000")
-
-            (getSystemService(NOTIFICATION_SERVICE) as NotificationManager)
-                .notify(8, makeNotification("الموقع يعمل على المنفذ 3000"))
-
         } catch (e: Exception) {
-            log("فشل التشغيل: ${e.message}")
-            stopHost()
-            stopForeground(STOP_FOREGROUND_REMOVE)
-            stopSelf()
+            LogStore.append(this, "تعذر تفعيل قفل المعالج: ${e.message}")
         }
     }
 
-    // يبحث عن index.html داخل المجلدات المتداخلة
-    private fun findWebsiteRoot(tree: Uri): String? {
-        val rootId = DocumentsContract.getTreeDocumentId(tree)
+    private fun releaseWakeLock() {
+        try { if (wakeLock?.isHeld == true) wakeLock?.release() } catch (_: Exception) { }
+        wakeLock = null
+    }
 
-        val queue = ArrayDeque<Pair<String, Int>>()
-        queue.add(rootId to 0)
+    private data class DocItem(val id: String, val name: String, val mime: String)
 
-        val ignoredFolders = setOf(
-            "node_modules",
-            ".git",
-            ".gradle",
-            "build",
-            ".idea"
+    private fun children(tree: Uri, parentId: String): List<DocItem> {
+        val childUri = DocumentsContract.buildChildDocumentsUriUsingTree(tree, parentId)
+        val projection = arrayOf(
+            DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+            DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+            DocumentsContract.Document.COLUMN_MIME_TYPE
         )
+        val result = ArrayList<DocItem>()
+        val cursor: Cursor = contentResolver.query(childUri, projection, null, null, null) ?: return result
+        cursor.use {
+            val idIndex = it.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_DOCUMENT_ID)
+            val nameIndex = it.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_DISPLAY_NAME)
+            val mimeIndex = it.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_MIME_TYPE)
+            while (it.moveToNext()) result.add(DocItem(it.getString(idIndex), it.getString(nameIndex) ?: "", it.getString(mimeIndex) ?: ""))
+        }
+        return result
+    }
 
-        var checked = 0
-        val maxFolders = 3000
-        val maxDepth = 15
+    private fun findBotDockRoot(tree: Uri): String {
+        val rootId = DocumentsContract.getTreeDocumentId(tree)
+        val queue = ArrayDeque<Pair<String, Int>>()
+        val seen = HashSet<String>()
+        queue.add(rootId to 0)
+        var inspected = 0
+        while (queue.isNotEmpty() && inspected < 2500) {
+            val (id, depth) = queue.removeFirst()
+            if (!seen.add(id)) continue
+            inspected++
+            val items = children(tree, id)
+            val names = items.map { it.name }.toSet()
+            if ("server.js" in names && items.any { it.name == "public" && it.mime == DocumentsContract.Document.MIME_TYPE_DIR }) return id
+            if (depth < 6) {
+                items.filter { it.mime == DocumentsContract.Document.MIME_TYPE_DIR && it.name !in SKIP_DIRS }
+                    .forEach { queue.add(it.id to depth + 1) }
+            }
+        }
+        throw IllegalStateException("لم أجد server.js ومجلد public. اختر مجلد BotDock الذي يحتوي ملفات المشروع.")
+    }
 
-        while (queue.isNotEmpty() && checked < maxFolders) {
-            val (currentId, depth) = queue.removeFirst()
-            checked++
+    private fun importBotDock(tree: Uri): File {
+        val rootId = findBotDockRoot(tree)
+        val destination = File(filesDir, "BotDock")
+        val firstImport = !File(destination, "server.js").exists()
+        destination.mkdirs()
+        copySafDirectory(tree, rootId, destination, "", firstImport)
+        if (!File(destination, "server.js").exists() || !File(destination, "public/index.html").exists()) {
+            throw IllegalStateException("نسخ المشروع غير مكتمل؛ تأكد من اختيار مجلد BotDock الصحيح.")
+        }
+        prefs.edit().putString("project_path", destination.absolutePath).apply()
+        return destination
+    }
 
-            val children = DocumentsContract
-                .buildChildDocumentsUriUsingTree(tree, currentId)
+    private fun copySafDirectory(tree: Uri, documentId: String, destination: File, relative: String, firstImport: Boolean) {
+        for (item in children(tree, documentId)) {
+            if (item.name.isBlank() || item.name in SKIP_ENTRIES) continue
+            val isDirectory = item.mime == DocumentsContract.Document.MIME_TYPE_DIR
+            val rel = if (relative.isEmpty()) item.name else "$relative/${item.name}"
+            val target = File(destination, rel)
+            if (!firstImport && relative.isEmpty() && item.name in setOf("data", "bots")) continue
+            if (isDirectory) {
+                target.mkdirs()
+                copySafDirectory(tree, item.id, destination, rel, firstImport)
+            } else {
+                target.parentFile?.mkdirs()
+                val uri = DocumentsContract.buildDocumentUriUsingTree(tree, item.id)
+                contentResolver.openInputStream(uri)?.use { input ->
+                    FileOutputStream(target).use { output -> input.copyTo(output, 64 * 1024) }
+                } ?: throw IllegalStateException("تعذرت قراءة الملف ${item.name}")
+            }
+        }
+    }
 
-            val cursor = contentResolver.query(
-                children,
-                arrayOf(
-                    DocumentsContract.Document.COLUMN_DOCUMENT_ID,
-                    DocumentsContract.Document.COLUMN_DISPLAY_NAME,
-                    DocumentsContract.Document.COLUMN_MIME_TYPE
-                ),
-                null,
-                null,
-                null
-            ) ?: continue
+    private fun copyAssetsIfNeeded(manager: AssetManager, assetPath: String, destination: File) {
+        val version = getSharedPreferences("host", Context.MODE_PRIVATE).getInt("assets_version", 0)
+        if (destination.exists() && version == ASSETS_VERSION) return
+        destination.deleteRecursively()
+        copyAssetFolder(manager, assetPath, destination)
+        prefs.edit().putInt("assets_version", ASSETS_VERSION).apply()
+    }
 
-            var indexFound = false
-            val folders = mutableListOf<String>()
-
-            cursor.use {
-                while (it.moveToNext()) {
-                    val id = it.getString(0)
-                    val name = it.getString(1)
-                    val type = it.getString(2)
-
-                    if (name.equals("index.html", ignoreCase = true)) {
-                        indexFound = true
-                    }
-
-                    if (
-                        type == DocumentsContract.Document.MIME_TYPE_DIR &&
-                        name !in ignoredFolders &&
-                        depth < maxDepth
-                    ) {
-                        folders.add(id)
-                    }
+    private fun copyAssetFolder(manager: AssetManager, assetPath: String, destination: File) {
+        destination.mkdirs()
+        val entries = manager.list(assetPath) ?: emptyArray()
+        for (entry in entries) {
+            val childPath = "$assetPath/$entry"
+            val child = File(destination, entry)
+            val children = manager.list(childPath)
+            if (children != null && children.isNotEmpty()) {
+                copyAssetFolder(manager, childPath, child)
+            } else {
+                child.parentFile?.mkdirs()
+                try {
+                    manager.open(childPath).use { input -> FileOutputStream(child).use { output -> input.copyTo(output) } }
+                } catch (_: java.io.FileNotFoundException) {
+                    child.mkdirs()
                 }
             }
-
-            if (indexFound) {
-                return currentId
-            }
-
-            for (folderId in folders) {
-                queue.add(folderId to depth + 1)
-            }
         }
-
-        return null
     }
 
-    // يبحث عن الملفات نسبةً إلى مجلد index.html
-    private fun resolve(
-        tree: Uri,
-        rootId: String,
-        relative: String
-    ): Uri? {
-        var currentId = rootId
-
-        val pieces = relative.split('/').filter { it.isNotBlank() }
-
-        for (piece in pieces) {
-            val children = DocumentsContract
-                .buildChildDocumentsUriUsingTree(tree, currentId)
-
-            val cursor = contentResolver.query(
-                children,
-                arrayOf(
-                    DocumentsContract.Document.COLUMN_DOCUMENT_ID,
-                    DocumentsContract.Document.COLUMN_DISPLAY_NAME
-                ),
-                null,
-                null,
-                null
-            ) ?: return null
-
-            var next: String? = null
-
-            cursor.use {
-                while (it.moveToNext()) {
-                    if (it.getString(1) == piece) {
-                        next = it.getString(0)
-                        break
-                    }
-                }
+    private fun waitForControl(timeoutMs: Long): Boolean {
+        val end = System.currentTimeMillis() + timeoutMs
+        while (System.currentTimeMillis() < end) {
+            val response = requestControl("GET", "/status")
+            if (response != null) {
+                try { if (org.json.JSONObject(response).optBoolean("running", false)) return true }
+                catch (_: Exception) { }
             }
-
-            currentId = next ?: return null
+            Thread.sleep(350)
         }
-
-        return DocumentsContract.buildDocumentUriUsingTree(tree, currentId)
+        return false
     }
 
-    private fun mime(path: String) =
-        when (path.substringAfterLast('.', "").lowercase()) {
-            "html" -> "text/html; charset=utf-8"
-            "css" -> "text/css; charset=utf-8"
-            "js" -> "application/javascript; charset=utf-8"
-            "json" -> "application/json"
-            "png" -> "image/png"
-            "jpg", "jpeg" -> "image/jpeg"
-            "svg" -> "image/svg+xml"
-            "ico" -> "image/x-icon"
-            "txt" -> "text/plain"
-            "woff" -> "font/woff"
-            "woff2" -> "font/woff2"
-            "ttf" -> "font/ttf"
-            else -> "application/octet-stream"
-        }
-
-    private fun stopHost() {
-        try {
-            http?.stop()
-        } catch (_: Exception) {}
-
-        http = null
-        siteRootId = null
-        running = false
-
-        try {
-            lock?.release()
-        } catch (_: Exception) {}
-
-        lock = null
-        log("توقف الخادم")
+    private fun sendControl(action: String) {
+        Thread({
+            val path = if (action == "stop") "/stop" else "/start"
+            var response: String? = null
+            for (attempt in 0 until 30) {
+                response = requestControl("POST", path)
+                if (response != null) break
+                Thread.sleep(350)
+            }
+            if (response != null) {
+                LogStore.append(this, if (action == "stop") "تم إيقاف خادم لوحة BotDock." else "تم تشغيل خادم لوحة BotDock.")
+                updateNotification(if (action == "stop") "محرك Node.js جاهز • لوحة BotDock متوقفة" else "محرك Node.js يعمل • لوحة BotDock جاهزة")
+            } else {
+                LogStore.append(this, "تعذر الاتصال بوحدة التحكم بمحرك Node.js. أعد تشغيل التطبيق.")
+            }
+        }, "Baraa-Host-Control").start()
     }
 
-    private fun log(line: String) {
-        val old = prefs.getString("logs", "") ?: ""
+    private fun requestControl(method: String, path: String): String? {
+        var connection: HttpURLConnection? = null
+        return try {
+            connection = (URL("http://127.0.0.1:3001$path").openConnection() as HttpURLConnection).apply {
+                requestMethod = method
+                connectTimeout = 900
+                readTimeout = 1200
+                if (method == "POST") doOutput = true
+            }
+            if (method == "POST") connection.outputStream.use { it.write(ByteArray(0)) }
+            if (connection.responseCode !in 200..299) return null
+            connection.inputStream?.bufferedReader()?.use { it.readText() }
+        } catch (_: Exception) { null }
+        finally { connection?.disconnect() }
+    }
 
-        prefs.edit()
-            .putString("logs", (old + "\n> " + line).takeLast(6000))
-            .apply()
+    private fun updateNotification(text: String) {
+        val manager = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
+        manager.notify(NOTIFICATION_ID, makeNotification(text))
     }
 
     private fun makeNotification(text: String): Notification {
-        val open = PendingIntent.getActivity(
-            this,
-            0,
-            Intent(this, MainActivity::class.java),
-            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        val openIntent = Intent(this, MainActivity::class.java)
+        val pending = android.app.PendingIntent.getActivity(
+            this, 0, openIntent,
+            android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
         )
-
         return NotificationCompat.Builder(this, CHANNEL)
             .setContentTitle("Baraa Terminal 2")
             .setContentText(text)
             .setSmallIcon(android.R.drawable.stat_sys_upload)
-            .setContentIntent(open)
+            .setContentIntent(pending)
             .setOngoing(true)
+            .setOnlyAlertOnce(true)
             .build()
     }
 
-    private fun makeChannel() {
+    private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= 26) {
-            val channel = NotificationChannel(
-                CHANNEL,
-                "BotDock Host",
-                NotificationManager.IMPORTANCE_LOW
-            )
-
-            (getSystemService(NOTIFICATION_SERVICE) as NotificationManager)
-                .createNotificationChannel(channel)
+            val channel = NotificationChannel(CHANNEL, "Baraa Node Host", NotificationManager.IMPORTANCE_LOW)
+            (getSystemService(NOTIFICATION_SERVICE) as NotificationManager).createNotificationChannel(channel)
         }
     }
 
     override fun onDestroy() {
-        stopHost()
+        releaseWakeLock()
         super.onDestroy()
     }
 
@@ -339,8 +318,15 @@ class HostService : Service() {
         const val START = "com.baraa.terminal2.START"
         const val STOP = "com.baraa.terminal2.STOP"
         const val CHANNEL = "baraa_terminal_host"
-
-        @Volatile
-        var running = false
+        const val NOTIFICATION_ID = 8
+        const val ASSETS_VERSION = 1
+        @Volatile var runtimeStarted = false
+        @Volatile var runtimeAttempted = false
+        init {
+            System.loadLibrary("node")
+            System.loadLibrary("native-lib")
+        }
+        private val SKIP_DIRS = setOf("node_modules", ".git", ".gradle", "build", "android-shell", ".idea")
+        private val SKIP_ENTRIES = SKIP_DIRS + setOf("BotDock.zip", "server.js.bak", "examples")
     }
 }

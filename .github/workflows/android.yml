@@ -3,8 +3,7 @@ name: Build Baraa Terminal 2 APK
 on:
   workflow_dispatch:
   push:
-    branches:
-      - main
+    branches: [ main ]
 
 permissions:
   contents: read
@@ -12,7 +11,6 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -23,11 +21,46 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Set up Android SDK
+      - name: Set up Node for bundled dependencies
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Prepare embedded Node.js runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          ARCHIVE_URL="https://github.com/nodejs-mobile/nodejs-mobile/releases/download/v18.20.4/nodejs-mobile-v18.20.4-android.zip"
+          curl -fL --retry 3 "$ARCHIVE_URL" -o /tmp/nodejs-mobile-android.zip
+          mkdir -p /tmp/nodejs-mobile-unpacked app/libnode/bin app/libnode/include
+          unzip -q /tmp/nodejs-mobile-android.zip -d /tmp/nodejs-mobile-unpacked
+          for ABI in arm64-v8a armeabi-v7a x86_64; do
+            LIB="$(find /tmp/nodejs-mobile-unpacked -type f -path "*/${ABI}/libnode.so" -print -quit)"
+            if [ -z "$LIB" ]; then
+              echo "Missing libnode.so for ${ABI}" >&2
+              exit 1
+            fi
+            mkdir -p "app/libnode/bin/${ABI}"
+            cp "$LIB" "app/libnode/bin/${ABI}/libnode.so"
+          done
+          HEADER="$(find /tmp/nodejs-mobile-unpacked -type f -path '*/node/node.h' -print -quit)"
+          if [ -z "$HEADER" ]; then
+            echo "Missing node.h in Node.js Mobile archive" >&2
+            exit 1
+          fi
+          INCLUDE_ROOT="${HEADER%/node/node.h}"
+          cp -R "$INCLUDE_ROOT/." app/libnode/include/
+          test -f app/libnode/include/node/node.h
+
+      - name: Install Android SDK, NDK and CMake
         uses: android-actions/setup-android@v3
         with:
-          packages: 'platforms;android-35 build-tools;35.0.0'
+          packages: 'platforms;android-35 build-tools;35.0.0 ndk;27.0.12077973 cmake;3.22.1'
           accept-android-sdk-licenses: true
+
+      - name: Install embedded Node modules
+        run: npm install --prefix app/src/main/assets/nodejs-project --omit=dev --ignore-scripts --no-audit --no-fund
+          rm -rf app/src/main/assets/nodejs-project/node_modules/.bin
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
@@ -40,5 +73,5 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: BaraaTerminal2-debug-APK
+          name: BaraaTerminal2-v2-debug-APK
           path: app/build/outputs/apk/debug/app-debug.apk
