@@ -59,7 +59,10 @@ jobs:
           accept-android-sdk-licenses: true
 
       - name: Install embedded Node modules
-        run: npm install --prefix app/src/main/assets/nodejs-project --omit=dev --ignore-scripts --no-audit --no-fund
+        shell: bash
+        run: |
+          set -e
+          npm install --prefix app/src/main/assets/nodejs-project --omit=dev --ignore-scripts --no-audit --no-fund
           rm -rf app/src/main/assets/nodejs-project/node_modules/.bin
 
       - name: Set up Gradle
