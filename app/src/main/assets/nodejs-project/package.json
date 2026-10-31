@@ -1,10 +1,11 @@
 {
-  "name": "baraa-terminal-node-runtime",
-  "version": "1.0.0",
+  "name": "r7host-android-runtime",
+  "version": "3.1.0",
   "private": true,
-  "description": "Embedded Node.js runtime dependencies for Baraa Terminal 2",
+  "description": "R7Host embedded Node.js server and shared Discord bot libraries",
   "dependencies": {
-    "adm-zip": "0.6.1",
-    "express": "4.22.3"
+    "adm-zip": "^0.6.1",
+    "discord.js": "14.21.0",
+    "express": "^4.22.3"
   }
 }

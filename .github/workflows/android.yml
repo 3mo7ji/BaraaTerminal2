@@ -1,4 +1,4 @@
-name: Build Baraa Terminal 2 APK
+name: Build R7Host APK
 
 on:
   workflow_dispatch:
@@ -25,6 +25,14 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
+
+      - name: Validate JavaScript and Worker runtime
+        run: |
+          node --check app/src/main/assets/r7host/server.js
+          node --check app/src/main/assets/r7host/runtime/bot-worker.js
+          node --check app/src/main/assets/nodejs-project/main.js
+          node --check app/src/main/assets/r7host/public/app.js
+          node tools/worker-smoke-test.cjs
 
       - name: Prepare embedded Node.js runtime
         shell: bash
@@ -61,9 +69,12 @@ jobs:
       - name: Install embedded Node modules
         shell: bash
         run: |
-          set -e
+          set -euo pipefail
           npm install --prefix app/src/main/assets/nodejs-project --omit=dev --ignore-scripts --no-audit --no-fund
           rm -rf app/src/main/assets/nodejs-project/node_modules/.bin
+          test -d app/src/main/assets/nodejs-project/node_modules/express
+          test -d app/src/main/assets/nodejs-project/node_modules/adm-zip
+          test -d app/src/main/assets/nodejs-project/node_modules/discord.js
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
@@ -76,5 +87,5 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: BaraaTerminal2-v2-debug-APK
+          name: R7Host-v3.1-debug-APK
           path: app/build/outputs/apk/debug/app-debug.apk

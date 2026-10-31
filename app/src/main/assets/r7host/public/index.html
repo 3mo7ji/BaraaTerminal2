@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#070b14"><title>R7Host — إدارة البوتات</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <div id="loginScreen" class="login-screen">
+    <div class="login-card">
+      <div class="brand-mark">R7</div><div class="brand-sub">HOST CONTROL CENTER</div>
+      <h1>مرحبًا بك في R7Host</h1><p>لوحة إدارة بوتات Discord من جهازك</p>
+      <form id="loginForm"><label for="pinInput">رمز الدخول</label><input id="pinInput" inputmode="numeric" maxlength="8" autocomplete="one-time-code" placeholder="••••••••" required><button class="btn primary full" type="submit">دخول إلى اللوحة</button></form>
+      <div id="loginError" class="error-text" role="alert"></div>
+      <div class="login-note">اللوحة محلية على هذا الجهاز فقط.</div>
+    </div>
+  </div>
+
+  <div id="appShell" class="app-shell hidden">
+    <aside id="sidebar" class="sidebar">
+      <div class="side-brand"><div class="brand-mark small">R7</div><div><b>R7Host</b><small>HOST CONTROL</small></div></div>
+      <div class="side-caption">مساحة العمل</div>
+      <button class="nav-item active" data-page="dashboard"><span>▦</span>الرئيسية</button>
+      <button class="nav-item" data-page="servers"><span>▣</span>السيرفرات <i id="navServerCount">0/5</i></button>
+      <button class="nav-item" data-page="assistant"><span>✦</span>مساعد R7 AI</button>
+      <button class="nav-item" data-page="settings"><span>⚙</span>الإعدادات</button>
+      <div class="side-bottom"><div class="engine-pill"><span class="pulse"></span><div><b>محرك Android</b><small>Worker Threads</small></div></div><button id="logoutBtn" class="nav-item logout"><span>↪</span>تسجيل الخروج</button></div>
+    </aside>
+
+    <main class="main-area">
+      <header class="topbar"><button id="menuBtn" class="icon-btn mobile-only" aria-label="القائمة">☰</button><div><div class="eyebrow">R7 HOST / <span id="breadcrumb">نظرة عامة</span></div><h1 id="pageTitle">لوحة التحكم</h1></div><div class="top-actions"><span class="device-chip"><span class="pulse"></span>استضافة محلية</span><button id="refreshBtn" class="icon-btn" title="تحديث">↻</button></div></header>
+
+      <section id="dashboardPage" class="page">
+        <div class="welcome-row"><div><p class="eyebrow blue">CONTROL YOUR BOTS</p><h2>كل بوتاتك في مكان واحد.</h2><p class="muted">أنشئ سيرفراتك، ارفع ملفات البوتات، وراقب التشغيل من لوحة واحدة.</p></div><button id="createServerBtn" class="btn primary">＋ إنشاء سيرفر</button></div>
+        <div class="stat-grid">
+          <article class="stat-card"><div class="stat-icon blue-bg">▣</div><div><small>إجمالي السيرفرات</small><strong id="statTotal">0</strong><em>من أصل 5 بوتات</em></div></article>
+          <article class="stat-card"><div class="stat-icon green-bg">●</div><div><small>بوتات تعمل</small><strong id="statRunning">0</strong><em>اتصال نشط</em></div></article>
+          <article class="stat-card"><div class="stat-icon amber-bg">Ⅱ</div><div><small>متوقفة / بها خطأ</small><strong id="statStopped">0</strong><em>تحتاج مراجعة</em></div></article>
+          <article class="stat-card"><div class="stat-icon violet-bg">✦</div><div><small>إعادة تشغيل تلقائية</small><strong id="statAuto">0</strong><em>مفعّلة</em></div></article>
+        </div>
+        <div class="section-head"><div><p class="eyebrow">YOUR WORKSPACE</p><h2>السيرفرات</h2></div><button class="text-link" data-go="servers">عرض الكل ←</button></div>
+        <div id="dashboardServers" class="server-grid"></div>
+        <div id="dashboardEmpty" class="empty-state"><div class="empty-icon">＋</div><h3>مساحة العمل فارغة</h3><p>ابدأ بإنشاء أول سيرفر ثم ارفع ملف ZIP الخاص بالبوت.</p><button class="btn primary" data-create>إنشاء أول سيرفر</button></div>
+        <div class="notice-row"><div class="notice-symbol">i</div><div><b>معلومة عن التشغيل على Android</b><p>يشغّل R7Host ملفات JavaScript داخل Worker Threads. لا يدعم أوامر النظام أو child_process أو تثبيت npm التلقائي. أرفق node_modules مع مشروعك عند الحاجة.</p></div></div>
+      </section>
+
+      <section id="serversPage" class="page hidden">
+        <div class="section-head"><div><p class="eyebrow">BOT INSTANCES</p><h2>إدارة السيرفرات</h2><p class="muted">يمكنك إنشاء حتى 5 سيرفرات بوت.</p></div><button id="createServerBtn2" class="btn primary">＋ إنشاء سيرفر</button></div>
+        <div class="toolbar"><input id="serverSearch" class="search-input" placeholder="ابحث عن سيرفر…"><span id="serverCount" class="muted tiny">0 من 5</span></div>
+        <div id="allServers" class="server-grid"></div>
+        <div id="serversEmpty" class="empty-state hidden"><div class="empty-icon">⌕</div><h3>لا توجد نتائج</h3><p>جرّب اسمًا آخر.</p></div>
+      </section>
+
+      <section id="detailPage" class="page hidden">
+        <div class="detail-heading"><button class="back-link" data-go="servers">→ جميع السيرفرات</button><div class="detail-title-row"><div><p class="eyebrow">BOT INSTANCE</p><h2 id="detailName">—</h2><p class="muted tiny" id="detailMeta">—</p></div><span id="detailStatus" class="status-badge stopped">متوقف</span></div>
+          <div class="detail-actions"><button id="detailStart" class="btn primary">▶ تشغيل البوت</button><button id="detailStop" class="btn danger">■ إيقاف</button><button id="detailRestartBtn" class="btn secondary">↻ إعادة التشغيل</button><button id="detailDelete" class="btn ghost-danger">حذف السيرفر</button></div>
+        </div>
+        <div class="detail-metrics"><div><small>ملف التشغيل</small><b id="detailEntry">index.js</b></div><div><small>المحرك</small><b>Node.js Mobile</b></div><div><small>إعادة التشغيل</small><b id="detailRestart">مفعّلة</b></div></div>
+        <div class="tabbar"><button class="tab active" data-tab="console">السجلات</button><button class="tab" data-tab="files">الملفات</button><button class="tab" data-tab="startup">إعدادات التشغيل</button></div>
+        <div id="consoleTab" class="tab-panel"><div class="console-card"><div class="console-top"><div><b>Live Console</b><small id="consoleState">في انتظار التشغيل</small></div><div class="console-actions"><button id="copyLogs" class="btn tiny-btn">نسخ</button><button id="clearLogs" class="btn tiny-btn">مسح</button><button id="refreshLogs" class="btn tiny-btn">تحديث</button></div></div><div id="logOutput" class="log-output"><div class="log-placeholder">لا توجد سجلات بعد.</div></div></div></div>
+        <div id="filesTab" class="tab-panel hidden"><div class="panel-card"><div class="panel-toolbar"><div><b>ملفات البوت</b><small id="filePath">الجذر /</small></div><div class="row-actions"><button id="newFile" class="btn tiny-btn">＋ ملف</button><button id="newFolder" class="btn tiny-btn">＋ مجلد</button><label class="btn primary tiny-btn upload-label">رفع ZIP<input id="zipInput" type="file" accept=".zip,application/zip" hidden></label></div></div><div id="fileList" class="file-list"><div class="log-placeholder">حمّل قائمة الملفات.</div></div></div></div>
+        <div id="startupTab" class="tab-panel hidden"><div class="panel-card startup-form"><div><p class="eyebrow">STARTUP CONFIG</p><h3>إعدادات البوت</h3><p class="muted">حدد ملف JavaScript الذي يبدأ تشغيل البوت.</p></div><label>ملف التشغيل<input id="entryFile" placeholder="index.js" dir="ltr"></label><label>متغيرات البيئة <small>مثال: DISCORD_TOKEN=... (لا تشاركها مع أحد)</small><textarea id="envText" rows="6" placeholder="DISCORD_TOKEN=ضع_التوكن_محليًا"></textarea></label><label class="switch-row"><span><b>إعادة التشغيل عند التعطل</b><small>حتى 5 محاولات خلال 10 دقائق.</small></span><input id="autoRestart" type="checkbox" checked></label><button id="saveStartup" class="btn primary">حفظ الإعدادات</button></div></div>
+      </section>
+
+      <section id="assistantPage" class="page hidden">
+        <div class="assistant-hero"><div class="assistant-orb">✦</div><div><p class="eyebrow blue">R7 INTELLIGENCE</p><h2>مساعد R7 AI</h2><p class="muted">اسأل عن أخطاء البوتات، افهم السجلات، وخذ اقتراحات إصلاح.</p></div></div>
+        <div class="assistant-layout"><div class="chat-card"><div class="chat-head"><div><b>محادثة المساعد</b><small id="aiModeLabel">التشخيص المحلي متاح دون مفتاح</small></div><button id="clearChat" class="btn tiny-btn">محادثة جديدة</button></div><div id="chatMessages" class="chat-messages"><div class="chat-bubble assistant"><b>R7 AI</b><p>مرحبًا! أقدر أساعدك في فهم سجلات الأخطاء ومشاكل تشغيل بوتاتك. اختر سيرفرًا قبل السؤال حتى أراجع سجلاته.</p></div></div><form id="chatForm" class="chat-compose"><select id="chatServer"><option value="">بدون سيرفر محدد</option></select><div class="compose-line"><textarea id="chatInput" rows="2" placeholder="اكتب سؤالك…"></textarea><button class="send-btn" type="submit">↑</button></div></form></div>
+          <div class="panel-card ai-config"><p class="eyebrow">OPTIONAL PROVIDER</p><h3>ربط مزوّد ذكاء اصطناعي</h3><p class="muted small">يمكنك استخدام مزود متوافق مع OpenAI Chat Completions. لا يوجد مفتاح API مضمّن في التطبيق. من دون ربط مزود، يعمل التشخيص المحلي فقط.</p><label>رابط API<input id="aiEndpoint" dir="ltr" placeholder="https://example.com/v1"></label><label>اسم النموذج<input id="aiModel" dir="ltr" placeholder="model-name"></label><label>مفتاح API<input id="aiKey" type="password" dir="ltr" autocomplete="off" placeholder="يُحفظ داخل مساحة التطبيق الخاصة"></label><button id="saveAiConfig" class="btn primary full">حفظ إعداد AI</button><button id="clearAiKey" class="btn secondary full">إزالة مفتاح AI المحفوظ</button><div id="aiConfigStatus" class="muted tiny"></div><div class="security-note">لا تضع مفتاحك في سجلات البوت أو ترسله في المحادثات. المفتاح لا يظهر مرة أخرى بعد حفظه.</div></div></div>
+      </section>
+
+      <section id="settingsPage" class="page hidden">
+        <p class="eyebrow">APP PREFERENCES</p><h2>الإعدادات</h2><div class="settings-grid">
+          <div class="panel-card"><div class="setting-icon">⏻</div><h3>استعادة التشغيل</h3><p class="muted">اطلب من Android إعادة فتح R7Host بعد إعادة تشغيل الهاتف. يعتمد ذلك على سياسات النظام وإعدادات البطارية.</p><label class="switch-row"><span><b>تشغيل R7Host بعد إعادة تشغيل الهاتف</b><small>سيتم استعادة البوتات التي كان خيار التشغيل التلقائي مفعّلًا لها.</small></span><input id="bootAutoStart" type="checkbox"></label><button id="batterySettings" class="btn secondary full">إعدادات البطارية</button></div>
+          <div class="panel-card"><div class="setting-icon">◈</div><h3>محرك البوتات</h3><p class="muted">حد أقصى 5 بوتات. كل بوت يعمل في Worker Thread مستقل داخل عملية التطبيق.</p><div class="fact-row"><span>Node.js</span><b id="nodeVersion">—</b></div><div class="fact-row"><span>نوع التشغيل</span><b>Worker Threads</b></div><div class="fact-row"><span>child_process</span><b class="warn-text">غير مدعوم</b></div><div class="fact-row"><span>npm install</span><b class="warn-text">غير مدعوم</b></div></div>
+          <div class="panel-card"><div class="setting-icon">≋</div><h3>إدارة عامة</h3><p class="muted">إيقاف جميع البوتات يدويًا. هذا يلغي الاستعادة التلقائية لكل بوت.</p><button id="stopAll" class="btn danger full">إيقاف جميع البوتات</button></div>
+        </div>
+      </section>
+
+      <footer class="footer"><span>R7Host v3.1</span><span>صُنع لإدارة بوتات Discord محليًا</span></footer>
+    </main>
+  </div>
+
+  <div id="createModal" class="modal hidden"><form id="createForm" class="modal-card"><button type="button" class="modal-close" data-close="createModal">×</button><p class="eyebrow blue">NEW INSTANCE</p><h3>إنشاء سيرفر جديد</h3><p class="muted">كل سيرفر يمثل مشروع بوت واحدًا.</p><label>اسم السيرفر<input id="newServerName" maxlength="48" placeholder="مثال: البوت الرئيسي" required></label><div class="modal-actions"><button type="button" class="btn secondary" data-close="createModal">إلغاء</button><button type="submit" class="btn primary">إنشاء السيرفر</button></div></form></div>
+  <div id="editorModal" class="modal hidden"><div class="modal-card editor-card"><button type="button" class="modal-close" data-close="editorModal">×</button><p class="eyebrow">FILE EDITOR</p><h3 id="editorTitle">تحرير الملف</h3><small id="editorPath" class="muted"></small><textarea id="editorContent" class="code-editor" spellcheck="false"></textarea><div class="modal-actions"><button class="btn secondary" data-close="editorModal">إغلاق</button><button id="saveFile" class="btn primary">حفظ الملف</button></div></div></div>
+  <div id="toastRegion" class="toast-region"></div>
+  <script src="/app.js"></script>
+</body></html>

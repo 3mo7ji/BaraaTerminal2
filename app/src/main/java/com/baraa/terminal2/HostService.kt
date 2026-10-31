@@ -7,23 +7,20 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.res.AssetManager
+import android.content.pm.ServiceInfo
 import android.net.Uri
 import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
-import android.provider.DocumentsContract
-import android.content.pm.ServiceInfo
-import android.database.Cursor
 import androidx.core.app.NotificationCompat
 import java.io.File
 import java.io.FileOutputStream
 import java.net.HttpURLConnection
 import java.net.URL
-import java.util.ArrayDeque
 import java.util.concurrent.atomic.AtomicBoolean
 
 class HostService : Service() {
-    private val prefs by lazy { getSharedPreferences("host", Context.MODE_PRIVATE) }
+    private val prefs by lazy { getSharedPreferences("r7host", Context.MODE_PRIVATE) }
     private var wakeLock: PowerManager.WakeLock? = null
     private val preparing = AtomicBoolean(false)
 
@@ -35,30 +32,26 @@ class HostService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        ensureForeground("تهيئة محرك R7Host")
         when (intent?.action ?: START) {
             START -> {
-                ensureForeground("تهيئة محرك Node.js")
-                when {
-                    runtimeStarted -> sendControl("start")
-                    runtimeAttempted -> LogStore.append(this, "محرك Node.js سبق تشغيله ثم انتهى؛ لا يمكن إعادة تشغيله داخل العملية نفسها. أوقف التطبيق إجباريًا من إعدادات Android ثم افتحه من جديد.")
-                    else -> startRuntime()
+                if (runtimeStarted) {
+                    updateNotification("R7Host يعمل • محرك البوتات نشط")
+                } else if (runtimeAttempted) {
+                    LogStore.append(this, "سبق تشغيل محرك Node.js داخل هذه العملية. أعد فتح التطبيق بعد تعطل المحرك.")
+                } else {
+                    startRuntime()
                 }
             }
-            STOP -> {
-                if (runtimeStarted) sendControl("stop")
-                else LogStore.append(this, "الخادم متوقف بالفعل.")
-            }
+            STOP_BOTS -> stopAllBots()
         }
         return START_STICKY
     }
 
     private fun ensureForeground(message: String) {
         val notification = makeNotification(message)
-        if (Build.VERSION.SDK_INT >= 29) {
-            startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
-        } else {
-            startForeground(NOTIFICATION_ID, notification)
-        }
+        if (Build.VERSION.SDK_INT >= 29) startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
+        else startForeground(NOTIFICATION_ID, notification)
     }
 
     private fun startRuntime() {
@@ -66,245 +59,158 @@ class HostService : Service() {
         Thread({
             try {
                 acquireWakeLock()
-                val treeText = prefs.getString("folder_uri", null)
-                    ?: throw IllegalStateException("اختر مجلد BotDock أولًا.")
-                val tree = Uri.parse(treeText)
-                val project = importBotDock(tree)
-                val nodeProject = File(filesDir, "nodejs-project")
-                copyAssetsIfNeeded(assets, "nodejs-project", nodeProject)
-                val mainJs = File(nodeProject, "main.js")
-                val logFile = File(filesDir, "baraa-host.log")
-                if (!mainJs.exists()) throw IllegalStateException("ملف تشغيل Node.js غير موجود داخل التطبيق.")
+                val appRoot = File(filesDir, "R7Host")
+                val runtimeRoot = File(filesDir, "nodejs-project")
+                copyAssetsIfNeeded(assets, "r7host", appRoot, APP_ASSETS_VERSION)
+                copyAssetsIfNeeded(assets, "nodejs-project", runtimeRoot, NODE_ASSETS_VERSION)
+                File(appRoot, "data").mkdirs()
+                File(appRoot, "bots").mkdirs()
+                val mainJs = File(runtimeRoot, "main.js")
+                val logFile = File(filesDir, "r7host-runtime.log")
+                if (!mainJs.exists() || !File(appRoot, "server.js").exists()) {
+                    throw IllegalStateException("ملفات محرك R7Host غير مكتملة داخل التطبيق.")
+                }
 
-                LogStore.append(this, "تم تجهيز ملفات BotDock داخل مساحة التطبيق.")
-                LogStore.append(this, "تشغيل محرك Node.js المدمج (18.20.4)…")
-                prefs.edit().putBoolean("engine_started", true).apply()
+                LogStore.append(this, "تم تجهيز واجهة R7Host ومحرك Worker Threads.")
+                LogStore.append(this, "بدء Node.js Mobile v18.20.4…")
                 runtimeAttempted = true
                 runtimeStarted = true
                 Thread({
                     try {
-                        val code = startNodeWithArguments(arrayOf("node", mainJs.absolutePath, project.absolutePath, logFile.absolutePath))
+                        val code = startNodeWithArguments(arrayOf(mainJs.absolutePath, appRoot.absolutePath, logFile.absolutePath))
                         LogStore.append(this, "انتهى محرك Node.js برمز $code.")
-                    } catch (e: Throwable) {
-                        LogStore.append(this, "تعطل محرك Node.js: ${e.message ?: e.javaClass.simpleName}")
+                    } catch (error: Throwable) {
+                        LogStore.append(this, "تعطل محرك Node.js: ${error.message ?: error.javaClass.simpleName}")
                     } finally {
                         runtimeStarted = false
-                        prefs.edit().putBoolean("engine_started", false).apply()
                         releaseWakeLock()
+                        updateNotification("توقف محرك R7Host")
                     }
-                }, "Baraa-Node-Runtime").apply { isDaemon = false; start() }
-                val ready = waitForControl(35_000)
+                }, "R7Host-Node-Runtime").apply { isDaemon = false; start() }
+
+                val ready = waitForControl(45_000)
                 if (ready) {
-                    LogStore.append(this, "BotDock جاهز على http://127.0.0.1:3000")
-                    updateNotification("محرك Node.js يعمل • لوحة BotDock جاهزة")
+                    LogStore.append(this, "R7Host جاهز: http://127.0.0.1:3000")
+                    updateNotification("R7Host يعمل • حتى 5 بوتات")
+                    prefs.edit().putBoolean("runtime_ready", true).apply()
                 } else {
-                    LogStore.append(this, "لم يستجب محرك BotDock خلال المهلة. راجع السجل.")
-                    updateNotification("تعذر بدء لوحة BotDock")
+                    LogStore.append(this, "لم يستجب محرك R7Host خلال المهلة. أعد فتح التطبيق وراجع السجل.")
+                    updateNotification("تعذر بدء محرك R7Host")
                 }
-            } catch (e: Exception) {
-                LogStore.append(this, "فشل التشغيل: ${e.message ?: e.javaClass.simpleName}")
+            } catch (error: Exception) {
+                LogStore.append(this, "فشل تجهيز R7Host: ${error.message ?: error.javaClass.simpleName}")
                 releaseWakeLock()
-                updateNotification("تعذر تشغيل BotDock")
+                updateNotification("تعذر تشغيل R7Host")
             } finally {
                 preparing.set(false)
             }
-        }, "Baraa-Host-Setup").start()
+        }, "R7Host-Setup").start()
+    }
+
+    private fun waitForControl(timeoutMs: Long): Boolean {
+        val end = System.currentTimeMillis() + timeoutMs
+        while (System.currentTimeMillis() < end) {
+            try {
+                val connection = URL("http://127.0.0.1:3001/").openConnection() as HttpURLConnection
+                connection.connectTimeout = 900
+                connection.readTimeout = 900
+                val ok = connection.responseCode == 200
+                connection.disconnect()
+                if (ok) return true
+            } catch (_: Exception) { Thread.sleep(450) }
+        }
+        return false
+    }
+
+    private fun stopAllBots() {
+        Thread({
+            try {
+                val connection = URL("http://127.0.0.1:3000/internal/stop-all").openConnection() as HttpURLConnection
+                connection.requestMethod = "POST"
+                connection.connectTimeout = 2500
+                connection.readTimeout = 2500
+                connection.doOutput = true
+                connection.outputStream.use { it.write(byteArrayOf()) }
+                LogStore.append(this, "تم إرسال طلب إيقاف جميع البوتات.")
+                connection.disconnect()
+            } catch (error: Exception) {
+                LogStore.append(this, "تعذر إيقاف البوتات: ${error.message}")
+            }
+        }, "R7Host-Stop-Bots").start()
     }
 
     private fun acquireWakeLock() {
         try {
             val power = getSystemService(POWER_SERVICE) as PowerManager
             if (wakeLock?.isHeld != true) {
-                wakeLock = power.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "R7Host:NodeHost").apply {
+                wakeLock = power.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "R7Host:BotEngine").apply {
                     setReferenceCounted(false)
                     acquire()
                 }
             }
-        } catch (e: Exception) {
-            LogStore.append(this, "تعذر تفعيل قفل المعالج: ${e.message}")
+        } catch (error: Exception) {
+            LogStore.append(this, "تعذر تفعيل قفل المعالج: ${error.message}")
         }
     }
 
     private fun releaseWakeLock() {
-        try { if (wakeLock?.isHeld == true) wakeLock?.release() } catch (_: Exception) { }
+        try { if (wakeLock?.isHeld == true) wakeLock?.release() } catch (_: Exception) {}
         wakeLock = null
     }
 
-    private data class DocItem(val id: String, val name: String, val mime: String)
-
-    private fun children(tree: Uri, parentId: String): List<DocItem> {
-        val childUri = DocumentsContract.buildChildDocumentsUriUsingTree(tree, parentId)
-        val projection = arrayOf(
-            DocumentsContract.Document.COLUMN_DOCUMENT_ID,
-            DocumentsContract.Document.COLUMN_DISPLAY_NAME,
-            DocumentsContract.Document.COLUMN_MIME_TYPE
-        )
-        val result = ArrayList<DocItem>()
-        val cursor: Cursor = contentResolver.query(childUri, projection, null, null, null) ?: return result
-        cursor.use {
-            val idIndex = it.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_DOCUMENT_ID)
-            val nameIndex = it.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_DISPLAY_NAME)
-            val mimeIndex = it.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_MIME_TYPE)
-            while (it.moveToNext()) result.add(DocItem(it.getString(idIndex), it.getString(nameIndex) ?: "", it.getString(mimeIndex) ?: ""))
-        }
-        return result
-    }
-
-    private fun findBotDockRoot(tree: Uri): String {
-        val rootId = DocumentsContract.getTreeDocumentId(tree)
-        val queue = ArrayDeque<Pair<String, Int>>()
-        val seen = HashSet<String>()
-        queue.add(rootId to 0)
-        var inspected = 0
-        while (queue.isNotEmpty() && inspected < 2500) {
-            val (id, depth) = queue.removeFirst()
-            if (!seen.add(id)) continue
-            inspected++
-            val items = children(tree, id)
-            val names = items.map { it.name }.toSet()
-            if ("server.js" in names && items.any { it.name == "public" && it.mime == DocumentsContract.Document.MIME_TYPE_DIR }) return id
-            if (depth < 6) {
-                items.filter { it.mime == DocumentsContract.Document.MIME_TYPE_DIR && it.name !in SKIP_DIRS }
-                    .forEach { queue.add(it.id to depth + 1) }
-            }
-        }
-        throw IllegalStateException("لم أجد server.js ومجلد public. اختر مجلد BotDock الذي يحتوي ملفات المشروع.")
-    }
-
-    private fun importBotDock(tree: Uri): File {
-        val rootId = findBotDockRoot(tree)
-        val destination = File(filesDir, "BotDock")
-        val firstImport = !File(destination, "server.js").exists()
+    private fun copyAssetsIfNeeded(manager: AssetManager, assetPath: String, destination: File, version: Int) {
+        val key = "assets_$assetPath"
+        if (destination.exists() && prefs.getInt(key, 0) == version) return
         destination.mkdirs()
-        copySafDirectory(tree, rootId, destination, "", firstImport)
-        if (!File(destination, "server.js").exists() || !File(destination, "public/index.html").exists()) {
-            throw IllegalStateException("نسخ المشروع غير مكتمل؛ تأكد من اختيار مجلد BotDock الصحيح.")
+        if (assetPath == "r7host") {
+            // Preserve user data and uploaded bot projects across app updates.
+            destination.listFiles()?.filter { it.name !in setOf("data", "bots") }?.forEach { it.deleteRecursively() }
+        } else {
+            destination.deleteRecursively()
+            destination.mkdirs()
         }
-        prefs.edit().putString("project_path", destination.absolutePath).apply()
-        return destination
-    }
-
-    private fun copySafDirectory(tree: Uri, documentId: String, destination: File, relative: String, firstImport: Boolean) {
-        for (item in children(tree, documentId)) {
-            if (item.name.isBlank() || item.name in SKIP_ENTRIES) continue
-            val isDirectory = item.mime == DocumentsContract.Document.MIME_TYPE_DIR
-            val rel = if (relative.isEmpty()) item.name else "$relative/${item.name}"
-            val target = File(destination, rel)
-            if (!firstImport && relative.isEmpty() && item.name in setOf("data", "bots")) continue
-            if (isDirectory) {
-                target.mkdirs()
-                copySafDirectory(tree, item.id, destination, rel, firstImport)
-            } else {
-                target.parentFile?.mkdirs()
-                val uri = DocumentsContract.buildDocumentUriUsingTree(tree, item.id)
-                contentResolver.openInputStream(uri)?.use { input ->
-                    FileOutputStream(target).use { output -> input.copyTo(output, 64 * 1024) }
-                } ?: throw IllegalStateException("تعذرت قراءة الملف ${item.name}")
-            }
-        }
-    }
-
-    private fun copyAssetsIfNeeded(manager: AssetManager, assetPath: String, destination: File) {
-        val version = getSharedPreferences("host", Context.MODE_PRIVATE).getInt("assets_version", 0)
-        if (destination.exists() && version == ASSETS_VERSION) return
-        destination.deleteRecursively()
         copyAssetFolder(manager, assetPath, destination)
-        prefs.edit().putInt("assets_version", ASSETS_VERSION).apply()
+        prefs.edit().putInt(key, version).apply()
     }
 
     private fun copyAssetFolder(manager: AssetManager, assetPath: String, destination: File) {
         destination.mkdirs()
         val entries = manager.list(assetPath) ?: emptyArray()
         for (entry in entries) {
-            val childPath = "$assetPath/$entry"
-            val child = File(destination, entry)
-            val children = manager.list(childPath)
-            if (children != null && children.isNotEmpty()) {
-                copyAssetFolder(manager, childPath, child)
-            } else {
-                child.parentFile?.mkdirs()
+            val childAsset = "$assetPath/$entry"
+            val childDest = File(destination, entry)
+            val children = manager.list(childAsset)
+            if (children != null && children.isNotEmpty()) copyAssetFolder(manager, childAsset, childDest)
+            else {
                 try {
-                    manager.open(childPath).use { input -> FileOutputStream(child).use { output -> input.copyTo(output) } }
-                } catch (_: java.io.FileNotFoundException) {
-                    child.mkdirs()
+                    manager.open(childAsset).use { input ->
+                        childDest.parentFile?.mkdirs()
+                        FileOutputStream(childDest).use { output -> input.copyTo(output, 64 * 1024) }
+                    }
+                } catch (_: Exception) {
+                    childDest.mkdirs()
                 }
             }
         }
     }
 
-    private fun waitForControl(timeoutMs: Long): Boolean {
-        val end = System.currentTimeMillis() + timeoutMs
-        while (System.currentTimeMillis() < end) {
-            val response = requestControl("GET", "/status")
-            if (response != null) {
-                try { if (org.json.JSONObject(response).optBoolean("running", false)) return true }
-                catch (_: Exception) { }
-            }
-            Thread.sleep(350)
-        }
-        return false
-    }
-
-    private fun sendControl(action: String) {
-        Thread({
-            val path = if (action == "stop") "/stop" else "/start"
-            var response: String? = null
-            for (attempt in 0 until 30) {
-                response = requestControl("POST", path)
-                if (response != null) break
-                Thread.sleep(350)
-            }
-            if (response != null) {
-                LogStore.append(this, if (action == "stop") "تم إيقاف خادم لوحة BotDock." else "تم تشغيل خادم لوحة BotDock.")
-                updateNotification(if (action == "stop") "محرك Node.js جاهز • لوحة BotDock متوقفة" else "محرك Node.js يعمل • لوحة BotDock جاهزة")
-            } else {
-                LogStore.append(this, "تعذر الاتصال بوحدة التحكم بمحرك Node.js. أعد تشغيل التطبيق.")
-            }
-        }, "Baraa-Host-Control").start()
-    }
-
-    private fun requestControl(method: String, path: String): String? {
-        var connection: HttpURLConnection? = null
-        return try {
-            connection = (URL("http://127.0.0.1:3001$path").openConnection() as HttpURLConnection).apply {
-                requestMethod = method
-                connectTimeout = 900
-                readTimeout = 1200
-                if (method == "POST") doOutput = true
-            }
-            if (method == "POST") connection.outputStream.use { it.write(ByteArray(0)) }
-            if (connection.responseCode !in 200..299) return null
-            connection.inputStream?.bufferedReader()?.use { it.readText() }
-        } catch (_: Exception) { null }
-        finally { connection?.disconnect() }
-    }
-
-    private fun updateNotification(text: String) {
-        val manager = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
-        manager.notify(NOTIFICATION_ID, makeNotification(text))
-    }
-
-    private fun makeNotification(text: String): Notification {
-        val openIntent = Intent(this, MainActivity::class.java)
-        val pending = android.app.PendingIntent.getActivity(
-            this, 0, openIntent,
-            android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
-        )
-        return NotificationCompat.Builder(this, CHANNEL)
-            .setContentTitle("R7Host")
-            .setContentText(text)
-            .setSmallIcon(android.R.drawable.stat_sys_upload)
-            .setContentIntent(pending)
-            .setOngoing(true)
-            .setOnlyAlertOnce(true)
-            .build()
-    }
-
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= 26) {
-            val channel = NotificationChannel(CHANNEL, "R7Host Node Host", NotificationManager.IMPORTANCE_LOW)
+            val channel = NotificationChannel(CHANNEL, "R7Host Bot Engine", NotificationManager.IMPORTANCE_LOW)
             (getSystemService(NOTIFICATION_SERVICE) as NotificationManager).createNotificationChannel(channel)
         }
+    }
+
+    private fun makeNotification(message: String): Notification = NotificationCompat.Builder(this, CHANNEL)
+        .setSmallIcon(android.R.drawable.stat_notify_sync)
+        .setContentTitle("R7Host")
+        .setContentText(message)
+        .setOngoing(true)
+        .setOnlyAlertOnce(true)
+        .build()
+
+    private fun updateNotification(message: String) {
+        try { (getSystemService(NOTIFICATION_SERVICE) as NotificationManager).notify(NOTIFICATION_ID, makeNotification(message)) } catch (_: Exception) {}
     }
 
     override fun onDestroy() {
@@ -316,17 +222,16 @@ class HostService : Service() {
 
     companion object {
         const val START = "com.baraa.terminal2.START"
-        const val STOP = "com.baraa.terminal2.STOP"
-        const val CHANNEL = "baraa_terminal_host"
-        const val NOTIFICATION_ID = 8
-        const val ASSETS_VERSION = 1
+        const val STOP_BOTS = "com.baraa.terminal2.STOP_BOTS"
+        const val CHANNEL = "r7host_engine"
+        const val NOTIFICATION_ID = 77
+        const val APP_ASSETS_VERSION = 4
+        const val NODE_ASSETS_VERSION = 4
         @Volatile var runtimeStarted = false
         @Volatile var runtimeAttempted = false
         init {
             System.loadLibrary("node")
             System.loadLibrary("native-lib")
         }
-        private val SKIP_DIRS = setOf("node_modules", ".git", ".gradle", "build", "android-shell", ".idea")
-        private val SKIP_ENTRIES = SKIP_DIRS + setOf("BotDock.zip", "server.js.bak", "examples")
     }
 }

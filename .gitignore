@@ -5,3 +5,5 @@ local.properties
 app/libnode/
 *.iml
 .DS_Store
+
+**/node_modules/
