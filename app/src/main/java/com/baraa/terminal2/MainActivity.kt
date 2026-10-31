@@ -81,34 +81,40 @@ class MainActivity : Activity() {
         }
         scrollRoot.addView(content)
 
-        content.addView(label("BARAA TERMINAL", 13, BLUE, true))
-        content.addView(label("2", 34, WHITE, true).apply { setPadding(0, 0, 0, dp(2)) })
-        content.addView(label("NODE.JS HOST  •  BOTDOCK EDITION", 11, MUTED, true).apply {
-            letterSpacing = 0.08f
-            setPadding(0, 0, 0, dp(22))
-        })
+        val brand = card().apply {
+            background = rounded(0xFF07152D.toInt(), 22)
+            gravity = Gravity.CENTER
+            setPadding(dp(18), dp(22), dp(18), dp(22))
+            addView(label("R7", 48, WHITE, true).apply { gravity = Gravity.CENTER; letterSpacing = 0.06f })
+            addView(label("HOST", 17, BLUE, true).apply { gravity = Gravity.CENTER; letterSpacing = 0.24f })
+            addView(label("استضافة وإدارة بوتات Discord", 12, MUTED, false).apply {
+                gravity = Gravity.CENTER
+                setPadding(0, dp(8), 0, 0)
+            })
+        }
+        content.addView(brand, spaced())
 
         val statusCard = card()
         statusCard.addView(label("حالة الاستضافة", 13, MUTED, true))
         statusText = label("جارٍ فحص الحالة…", 21, GREEN, true).apply { setPadding(0, dp(8), 0, 0) }
         statusCard.addView(statusText)
-        statusDetail = label("محرك Node.js واللوحة المحلية", 12, MUTED, false).apply { setPadding(0, dp(5), 0, 0) }
+        statusDetail = label("محرك الاستضافة المحلي", 12, MUTED, false).apply { setPadding(0, dp(5), 0, 0) }
         statusCard.addView(statusDetail)
         content.addView(statusCard, spaced())
 
         content.addView(sectionTitle("إدارة الخادم"))
         val folderCard = card()
-        folderCard.addView(label("مجلد BotDock", 14, WHITE, true))
+        folderCard.addView(label("مجلد مشروع الاستضافة", 14, WHITE, true))
         folderText = label("لم يتم اختيار مجلد", 12, MUTED, false).apply { setPadding(0, dp(7), 0, dp(12)) }
         folderCard.addView(folderText)
-        folderCard.addView(actionButton("اختيار مجلد BotDock", BLUE) { chooseFolder() })
+        folderCard.addView(actionButton("اختيار مجلد مشروع الاستضافة", BLUE) { chooseFolder() })
         content.addView(folderCard, spaced())
 
         val actionRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
         }
-        startButton = actionButton("تشغيل BotDock", GREEN_DARK) { startHost() }
+        startButton = actionButton("تشغيل R7Host", GREEN_DARK) { startHost() }
         stopButton = actionButton("إيقاف الخادم", RED_DARK) { stopHost() }
         actionRow.addView(startButton, LinearLayout.LayoutParams(0, dp(54), 1f).apply { marginEnd = dp(6) })
         actionRow.addView(stopButton, LinearLayout.LayoutParams(0, dp(54), 1f).apply { marginStart = dp(6) })
@@ -150,7 +156,7 @@ class MainActivity : Activity() {
         content.addView(logsCard, spaced())
 
         content.addView(label(
-            "ملاحظة: هذا الإصدار يشغّل لوحة BotDock وواجهات API بمحرك Node.js مدمج. تشغيل بوتات Discord كعمليات مستقلة غير مدعوم في محرك Android المدمج.",
+            "ملاحظة: هذا الإصدار يشغّل لوحة R7Host وواجهات API بمحرك Node.js مدمج. تشغيل بوتات Discord كعمليات مستقلة غير مدعوم في محرك Android المدمج.",
             11, MUTED, false
         ).apply { setPadding(dp(4), dp(12), dp(4), 0) })
 
@@ -224,7 +230,7 @@ class MainActivity : Activity() {
                 prefs.edit().putString("folder_uri", uri.toString()).putString("folder_name", name).apply()
                 LogStore.append(this, "تم حفظ إذن الوصول للمجلد المحدد: $name")
                 refreshFolder()
-                Toast.makeText(this, "تم اختيار المجلد. اضغط تشغيل BotDock.", Toast.LENGTH_LONG).show()
+                Toast.makeText(this, "تم اختيار المجلد. اضغط تشغيل R7Host.", Toast.LENGTH_LONG).show()
             } catch (e: Exception) {
                 Toast.makeText(this, "تعذر حفظ إذن المجلد: ${e.message}", Toast.LENGTH_LONG).show()
             }
@@ -233,7 +239,7 @@ class MainActivity : Activity() {
 
     private fun startHost() {
         if (prefs.getString("folder_uri", null) == null) {
-            Toast.makeText(this, "اختر مجلد BotDock أولًا.", Toast.LENGTH_LONG).show()
+            Toast.makeText(this, "اختر مجلد مشروع الاستضافة أولًا.", Toast.LENGTH_LONG).show()
             return
         }
         if (busy || currentServerState == "running") return
@@ -241,7 +247,7 @@ class MainActivity : Activity() {
         pendingSince = System.currentTimeMillis()
         pendingAction = "start"
         setButtonsEnabled(false)
-        LogStore.append(this, "طلب تشغيل BotDock…")
+        LogStore.append(this, "طلب تشغيل R7Host…")
         try {
             val intent = Intent(this, HostService::class.java).setAction(HostService.START)
             ContextCompat.startForegroundService(this, intent)
@@ -261,7 +267,7 @@ class MainActivity : Activity() {
         pendingSince = System.currentTimeMillis()
         pendingAction = "stop"
         setButtonsEnabled(false)
-        LogStore.append(this, "طلب إيقاف لوحة BotDock…")
+        LogStore.append(this, "طلب إيقاف لوحة R7Host…")
         try {
             startService(Intent(this, HostService::class.java).setAction(HostService.STOP))
         } catch (e: Exception) {
@@ -275,7 +281,7 @@ class MainActivity : Activity() {
 
     private fun openDashboard() {
         if (currentServerState != "running") {
-            Toast.makeText(this, "شغّل BotDock أولًا.", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "شغّل R7Host أولًا.", Toast.LENGTH_SHORT).show()
             return
         }
         try { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("http://127.0.0.1:3000"))) }
@@ -333,7 +339,7 @@ class MainActivity : Activity() {
                     statusText.setTextColor(if (running) GREEN else MUTED)
                     statusDetail.text = when {
                         running -> "http://127.0.0.1:3000  •  محرك Node.js جاهز"
-                        starting -> "يتم فتح منفذ لوحة BotDock…"
+                        starting -> "يتم فتح منفذ لوحة R7Host…"
                         else -> "محرك Node.js ${if (engine) "جاهز" else "غير متصل"} • يمكنك تشغيل اللوحة مجددًا"
                     }
                     busy = when (pendingAction) {
@@ -349,7 +355,7 @@ class MainActivity : Activity() {
                     if (currentServerState != "unknown") currentServerState = "stopped"
                     statusText.text = if (HostService.runtimeStarted || (busy && System.currentTimeMillis() - pendingSince < 40_000)) "جارٍ تهيئة الخادم…" else "متوقف"
                     statusText.setTextColor(MUTED)
-                    statusDetail.text = if (HostService.runtimeStarted || busy) "يتم تجهيز Node.js أو انتظار استجابة الخادم" else "اختر مجلد BotDock ثم اضغط تشغيل"
+                    statusDetail.text = if (HostService.runtimeStarted || busy) "يتم تجهيز Node.js أو انتظار استجابة الخادم" else "اختر مجلد مشروع الاستضافة ثم اضغط تشغيل"
                 }
                 if (busy && pendingSince > 0L && System.currentTimeMillis() - pendingSince >= 40_000) {
                     busy = false
@@ -382,7 +388,7 @@ class MainActivity : Activity() {
     private fun copyLogs() {
         val value = LogStore.read(this)
         val clipboard = getSystemService(CLIPBOARD_SERVICE) as ClipboardManager
-        clipboard.setPrimaryClip(ClipData.newPlainText("Baraa Terminal 2 logs", value))
+        clipboard.setPrimaryClip(ClipData.newPlainText("R7Host logs", value))
         Toast.makeText(this, "تم نسخ السجل.", Toast.LENGTH_SHORT).show()
     }
 
@@ -414,13 +420,13 @@ class MainActivity : Activity() {
 
     companion object {
         private const val WHITE = Color.WHITE
-        private const val BLUE = 0xFF2F80ED.toInt()
+        private const val BLUE = 0xFF087BFF.toInt()
         private const val GREEN = 0xFF42D392.toInt()
         private const val GREEN_DARK = 0xFF167B5A.toInt()
         private const val RED_DARK = 0xFF8D3444.toInt()
-        private const val SURFACE = 0xFF121D32.toInt()
-        private const val SURFACE_BUTTON = 0xFF26344D.toInt()
+        private const val SURFACE = 0xFF0D1830.toInt()
+        private const val SURFACE_BUTTON = 0xFF142746.toInt()
         private const val LOG_TEXT = 0xFFCFD9EA.toInt()
-        private const val MUTED = 0xFF93A5BE.toInt()
+        private const val MUTED = 0xFF91A8C8.toInt()
     }
 }

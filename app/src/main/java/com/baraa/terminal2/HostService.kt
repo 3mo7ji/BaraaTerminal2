@@ -115,7 +115,7 @@ class HostService : Service() {
         try {
             val power = getSystemService(POWER_SERVICE) as PowerManager
             if (wakeLock?.isHeld != true) {
-                wakeLock = power.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "BaraaTerminal2:NodeHost").apply {
+                wakeLock = power.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "R7Host:NodeHost").apply {
                     setReferenceCounted(false)
                     acquire()
                 }
@@ -291,7 +291,7 @@ class HostService : Service() {
             android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
         )
         return NotificationCompat.Builder(this, CHANNEL)
-            .setContentTitle("Baraa Terminal 2")
+            .setContentTitle("R7Host")
             .setContentText(text)
             .setSmallIcon(android.R.drawable.stat_sys_upload)
             .setContentIntent(pending)
@@ -302,7 +302,7 @@ class HostService : Service() {
 
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= 26) {
-            val channel = NotificationChannel(CHANNEL, "Baraa Node Host", NotificationManager.IMPORTANCE_LOW)
+            val channel = NotificationChannel(CHANNEL, "R7Host Node Host", NotificationManager.IMPORTANCE_LOW)
             (getSystemService(NOTIFICATION_SERVICE) as NotificationManager).createNotificationChannel(channel)
         }
     }

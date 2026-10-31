@@ -8,7 +8,8 @@
 
     <application
         android:theme="@android:style/Theme.Material.NoActionBar"
-        android:label="Baraa Terminal 2"
+        android:label="R7Host"
+        android:icon="@mipmap/ic_launcher"
         android:usesCleartextTraffic="true"
         android:allowBackup="false">
         <activity
